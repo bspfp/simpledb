@@ -55,7 +55,7 @@ func (d *Database) Open() error {
 
 	// 실행 테스트
 	param := NewGetParam().WithLimit(1)
-	if _, err := d.Get(param); err != nil {
+	if _, err := d.Get([]*GetParam{param}); err != nil {
 		return fmt.Errorf("test failed: %w", err)
 	}
 
@@ -71,28 +71,24 @@ func (d *Database) Close() {
 	}
 }
 
-func (d *Database) Get(param *GetParam) ([]*DbDoc, error) {
-	sql := fmt.Sprintf(`SELECT pk, rev, data %v FROM "%v" %v`, indexListForStatement, d.Name, param.ToSelect())
-	rows, err := d.Db.Query(sql, param.Where.GetParam()...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var res []*DbDoc
-	for rows.Next() {
-		var doc DbDoc
-		if err := doc.Scan(rows); err != nil {
+func (d *Database) Get(params []*GetParam) ([][]*DbDoc, error) {
+	switch len(params) {
+	case 0:
+		return nil, ErrNoItems
+	case 1:
+		return d.get(d.Db, params)
+	default:
+		tx, err := d.Db.Begin()
+		if err != nil {
 			return nil, err
 		}
-		res = append(res, &doc)
+		defer func() {
+			if err := tx.Rollback(); err != nil {
+				log.Println("rollback failed", err)
+			}
+		}()
+		return d.get(tx, params)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return res, err
 }
 
 func (d *Database) Put(items []*DbDoc) error {
@@ -125,15 +121,6 @@ func (d *Database) Delete(where *WhereClause) (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
-}
-
-func (d *Database) Count(where *WhereClause) (int64, error) {
-	sql := fmt.Sprintf(`SELECT COUNT(*) FROM "%v" %v`, d.Name, where.GetClause())
-	var count int64
-	if err := d.Db.QueryRow(sql, where.GetParam()...).Scan(&count); err != nil {
-		return 0, err
-	}
-	return count, nil
 }
 
 // indexListForStatement `, si1, ni1, si2, ni2, ...`
@@ -185,6 +172,59 @@ func (d *Database) vacuum() error {
 		return err
 	}
 	return nil
+}
+
+func (d *Database) get(tx dbExecutor, params []*GetParam) ([][]*DbDoc, error) {
+	result := make([][]*DbDoc, 0, len(params))
+	for _, param := range params {
+		var res []*DbDoc
+		var err error
+		if param.Count {
+			res, err = d.getCount(tx, param.Where)
+		} else {
+			res, err = d.getItems(tx, param)
+		}
+		if err != nil {
+			return result, err
+		}
+		result = append(result, res)
+	}
+	return result, nil
+}
+
+func (d *Database) getItems(tx dbExecutor, param *GetParam) ([]*DbDoc, error) {
+	sql := fmt.Sprintf(`SELECT pk, rev, data %v FROM "%v" %v`, indexListForStatement, d.Name, param.ToSelect())
+	rows, err := tx.Query(sql, param.Where.GetParam()...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var res []*DbDoc
+	for rows.Next() {
+		var doc DbDoc
+		if err := doc.Scan(rows); err != nil {
+			return nil, err
+		}
+		res = append(res, &doc)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return res, err
+}
+
+func (d *Database) getCount(tx dbExecutor, where *WhereClause) ([]*DbDoc, error) {
+	sql := fmt.Sprintf(`SELECT COUNT(*) FROM "%v" %v`, d.Name, where.GetClause())
+	var count int64
+	if err := tx.QueryRow(sql, where.GetParam()...).Scan(&count); err != nil {
+		return nil, err
+	}
+	doc := &DbDoc{}
+	doc.NI[0] = &count
+	return []*DbDoc{doc}, nil
 }
 
 func (d *Database) put(tx dbExecutor, items []*DbDoc) error {
@@ -254,5 +294,6 @@ func (d *Database) put(tx dbExecutor, items []*DbDoc) error {
 type dbExecutor interface {
 	Exec(query string, args ...any) (sql.Result, error)
 	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
 	Prepare(query string) (*sql.Stmt, error)
 }

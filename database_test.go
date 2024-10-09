@@ -63,27 +63,41 @@ func TestExample(t *testing.T) {
 	}
 
 	// Count
-	if n, err := db.Count(simpledb.WhereEqual("pk", "data1")); err != nil {
+	// Get의 응답 아이템의 NI[0]에 수량을 담아 반환한다.
+	// (Returns the count in the NI[0] of the response item of Get.)
+	// 아래 예제에서는 where를 1개 지정하였으므로 응답 0번의 아이템에만 데이터가 저장된다.
+	// (In the following example, since only one where is specified, the data is stored only in the response item 0.)
+	// 오류가 없다면 params의 길이와 응답의 길이는 동일하다.
+	// (If there is no error, the length of params and the length of the response are the same.)
+	param := simpledb.NewGetParam().WithWhere(simpledb.WhereEqual("pk", "data1")).WithCount()
+	if res, err := db.Get([]*simpledb.GetParam{param}); err != nil {
 		panic(err)
-	} else if n != 1 {
+	} else if len(res) != 1 || len(res[0]) != 1 || res[0][0].NI[0] == nil || *res[0][0].NI[0] != 1 {
 		panic("count failed")
 	}
 
 	// Get
-	param := simpledb.NewGetParam().WithWhere(simpledb.WhereEqual("pk", "data1"))
-	docs, err := db.Get(param)
-	if err != nil {
+	// 입력된 파라미터 모두를 1개의 트랜잭션에서 읽는다.
+	// (Read all input parameters in one transaction.)
+	// 트랜잭션은 읽기만 하므로 commit 없이 rollback 된다.
+	// (The transaction only reads, so it is rolled back without commit.)
+	// 오류가 없다면 params의 길이와 응답의 길이는 동일하다.
+	// (If there is no error, the length of params and the length of the response are the same.)
+	param = simpledb.NewGetParam().WithWhere(simpledb.WhereEqual("pk", "data1"))
+	if res, err := db.Get([]*simpledb.GetParam{param}); err != nil {
 		panic(err)
-	}
-	if len(docs) == 0 {
+	} else if len(res) != 1 {
+		panic("no result")
+	} else if len(res[0]) != 1 {
 		panic("no docs")
-	}
-	docdata, err := docs[0].Decode()
-	if err != nil {
-		panic(err)
-	}
-	if docdata["n"].(int64) != 2 || docdata["f"].(float64) != 3.4 || docdata["s"].(string) != "world" {
-		panic("doc data mismatch")
+	} else {
+		docdata, err := res[0][0].Decode()
+		if err != nil {
+			panic(err)
+		}
+		if docdata["n"].(int64) != 2 || docdata["f"].(float64) != 3.4 || docdata["s"].(string) != "world" {
+			panic("doc data mismatch")
+		}
 	}
 
 	// Delete

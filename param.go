@@ -4,6 +4,7 @@ import "fmt"
 
 type GetParam struct {
 	Where   *WhereClause
+	Count   bool
 	Limit   string
 	OrderBy string
 }
@@ -17,7 +18,15 @@ func (p *GetParam) WithWhere(where *WhereClause) *GetParam {
 	return p
 }
 
+func (p *GetParam) WithCount() *GetParam {
+	p.Count = true
+	p.Limit = ""
+	p.OrderBy = ""
+	return p
+}
+
 func (p *GetParam) WithLimit(limit int, offset ...int) *GetParam {
+	p.Count = false
 	p.Limit = fmt.Sprintf("LIMIT %v", limit)
 	if len(offset) > 0 {
 		p.Limit = fmt.Sprintf("LIMIT %v OFFSET %v", limit, offset[0])
@@ -26,6 +35,7 @@ func (p *GetParam) WithLimit(limit int, offset ...int) *GetParam {
 }
 
 func (p *GetParam) WithOrderBy(field string, acsOrDesc bool) *GetParam {
+	p.Count = false
 	var orderby string
 	if acsOrDesc {
 		orderby = fmt.Sprintf(`"%v" ASC`, field)
